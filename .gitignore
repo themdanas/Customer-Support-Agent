@@ -1,0 +1,215 @@
+/.bot_env
+/.vscode
+
+# ============================================================
+# Customer Support Agent - .gitignore
+# ============================================================
+
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+.bot_env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+
+# ------------------------------------------------------------
+# Environment / Secrets
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.crt
+
+# ------------------------------------------------------------
+# IDE / Editors
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# ------------------------------------------------------------
+# Logs
+# ------------------------------------------------------------
+*.log
+logs/
+log/
+
+# ------------------------------------------------------------
+# Local data / generated files
+# ------------------------------------------------------------
+data/raw/
+data/processed/
+data/generated/
+
+*.csv
+*.jsonl
+*.parquet
+*.sqlite
+*.db
+
+# Keep explicitly documented example/sample data
+!data/examples/
+!data/examples/**
+
+# ------------------------------------------------------------
+# Model / Embeddings / Vector Stores
+# ------------------------------------------------------------
+models/
+checkpoints/
+outputs/
+artifacts/
+
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+
+# Local vector databases / indexes
+chroma/
+chroma_db/
+vectorstore/
+vector_store/
+faiss_index/
+
+# ------------------------------------------------------------
+# LangGraph / Agent Runtime State
+# ------------------------------------------------------------
+.checkpoints/
+checkpoints/
+.runtime/
+runtime/
+sessions/
+
+# ------------------------------------------------------------
+# PostgreSQL
+# ------------------------------------------------------------
+# PostgreSQL data directory should NEVER be committed
+postgres_data/
+postgres-data/
+pgdata/
+postgres/
+
+# Local database dumps
+*.sql
+*.dump
+*.backup
+
+# Allow schema/migration SQL if stored intentionally
+!migrations/**/*.sql
+!database/migrations/**/*.sql
+!db/migrations/**/*.sql
+
+# ------------------------------------------------------------
+# Docker
+# ------------------------------------------------------------
+.docker/
+docker-data/
+docker-volumes/
+
+# Docker Compose generated overrides
+docker-compose.override.yml
+
+# ------------------------------------------------------------
+# API / Server generated files
+# ------------------------------------------------------------
+uploads/
+tmp/
+temp/
+
+# ------------------------------------------------------------
+# Jupyter
+# ------------------------------------------------------------
+.ipynb_checkpoints/
+
+# ------------------------------------------------------------
+# Documentation generated files
+# ------------------------------------------------------------
+*.pdf
+*.docx
+
+# ------------------------------------------------------------
+# Node / Frontend (if frontend is added later)
+# ------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+.next/
+.nuxt/
+.cache/
+
+# ------------------------------------------------------------
+# Secrets / Credentials
+# ------------------------------------------------------------
+credentials/
+secrets/
+*.secret
+
+# Common cloud credentials
+.aws/
+.gcp/
+.azure/
+
+# ------------------------------------------------------------
+# OS / Temporary files
+# ------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
+
+# ------------------------------------------------------------
+# Project-specific generated files
+# ------------------------------------------------------------
+evaluation_results/
+benchmark_results/
+test_results/
+reports/generated/
+
+# ------------------------------------------------------------
+# Local development config
+# ------------------------------------------------------------
+config.local.py
+settings.local.py
