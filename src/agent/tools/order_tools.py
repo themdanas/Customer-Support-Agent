@@ -38,7 +38,7 @@ def initiate_refund(order_id: str, amount: float, reason: str = "") -> dict:
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT total_amount FROM orders WHERE order_id = %s",(order_id))
+        cur.execute("SELECT total_amount FROM orders WHERE order_id = %s",(order_id,))
         row = cur.fetchone()
         if row is None:
             return{
@@ -61,7 +61,7 @@ def initiate_refund(order_id: str, amount: float, reason: str = "") -> dict:
             INSERT INTO refunds (order_id, amount, status, reason, processed_at)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING refund_id
-            """
+            """,
             (order_id, amount, status, reason, processed_at)
         )
         refund_id = cur.fetchone()["refund_id"]
@@ -75,9 +75,8 @@ def initiate_refund(order_id: str, amount: float, reason: str = "") -> dict:
                 "requires_escalation": False,
             }
         else:
-            reason = []
-            if not withing_amount_limit:
                 reason = []
+            
                 if not withing_amount_limit:
                     reason.append(f"amount ${amount:.2f} exceeds ${AUTO_APPROVE_MAX_AMOUNT:.2f} threshold")
                 if not within_ratio_limit:
