@@ -6,7 +6,7 @@ State schema for the AI Customer Support Agent graph.
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal, Optional, TypedDict
 from pydantic import BaseModel, Field
@@ -39,7 +39,7 @@ class ActionType(str, Enum):
     ESCALATE = "escalate"
 
 class ReasonerDecision(BaseModel):
-    action_typr: ActionType
+    action_type: ActionType
     rationale: str
     tool_name: Optional[str] = None
     tool_args: dict = Field(default_factory=dict)
@@ -52,7 +52,7 @@ class ActionResult(BaseModel):
     requires_escalation: bool = False
     escalation_reason: Optional[str] = None
 
-class EscalationPriority:
+class EscalationPriority(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -62,7 +62,7 @@ class EscalationRecord(BaseModel):
     reason: str
     priority: EscalationPriority
     source_node: Literal["reasoner", "action"]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class StepLog(BaseModel):
     node_name: str
@@ -75,7 +75,7 @@ class StepLog(BaseModel):
 class ConversationStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
-    ESCALATED = "escalted"
+    ESCALATED = "escalated"
 
 class AgentState(TypedDict, total=False):
     conversation_id: str
