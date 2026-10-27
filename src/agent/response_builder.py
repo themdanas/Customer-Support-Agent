@@ -13,6 +13,34 @@ def response_builder_node(state: dict) -> dict:
         state["status"] = ConversationStatus.ESCALATED
         return state
 
+    approval = state.get("approval_decision")
+    action_result = state.get("action_result")
+
+    if approval:
+        if approval.approved:
+            extra = action_result.output if action_result else ""
+            state["final_response"] = f"Your request has been approved and processed. {extra}".strip()
+            state["status"] = ConversationStatus.RESOLVED
+        else:
+            reason = approval.reason or "Policy limit exceeded"
+            state["final_response"] = f"Your request was reviewed and could not be approved: {reason}."
+            state["status"] = ConversationStatus.RESOLVED
+        return state
+
+    if action_result:
+        if action_result.requires_escalation:
+            state["final_response"] = (
+                f"Your request requires human approval: {action_result.escalation_reason or 'Policy threshold exceeded.'}"
+            )
+            state["status"] = ConversationStatus.PENDING_APPROVAL
+        elif action_result.success:
+            state["final_response"] = action_result.output
+            state["status"] = ConversationStatus.RESOLVED
+        else:
+            state["final_response"] = f"Unable to complete request: {action_result.output}"
+            state["status"] = ConversationStatus.RESOLVED
+        return state
+
     action_type = decision.action_type if hasattr(decision, "action_type") else decision.get("action_type")
 
     if action_type == ActionType.ANSWER:

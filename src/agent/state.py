@@ -72,10 +72,17 @@ class StepLog(BaseModel):
     output_summary: str
     error: Optional[str] = None
 
+class ApprovalDecision(BaseModel):
+    approved: bool
+    reason: Optional[str] = None
+    reviewer: Optional[str] = None
+    reviewed_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 class ConversationStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
     ESCALATED = "escalated"
+    PENDING_APPROVAL = "pending_approval"
 
 class AgentState(TypedDict, total=False):
     conversation_id: str
@@ -87,6 +94,7 @@ class AgentState(TypedDict, total=False):
     decision: Optional[ReasonerDecision]
     action_result: Optional[ActionResult]
     escalation: Optional[EscalationRecord]
+    approval_decision: Optional[ApprovalDecision]
     final_response: Optional[str]
     status: ConversationStatus
     trace: list[StepLog]

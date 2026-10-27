@@ -54,6 +54,10 @@ def _summarize(state: dict, node_name: str) -> str:
         r = state.get("action_result")
         success = getattr(r, "success", None) or (r.get("success") if isinstance(r, dict) else None)
         return f"success={success}"
+    if node_name == "human_approval":
+        appr = state.get("approval_decision")
+        approved = getattr(appr, "approved", None) if appr else None
+        return f"approved={approved}"
     if node_name == "response_builder":
         return f"status={state.get('status')}"
     return "ok"

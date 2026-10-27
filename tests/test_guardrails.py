@@ -9,7 +9,8 @@ from src.agent.tools.order_tools import initiate_refund, AUTO_APPROVE_MAX_AMOUNT
 
 @pytest.fixture
 def db_conn():
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    db_url = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/support_agent")
+    conn = psycopg2.connect(db_url)
     yield conn
     conn.close()
 

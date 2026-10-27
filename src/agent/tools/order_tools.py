@@ -15,9 +15,14 @@ def extract_order_id(message: str) -> str | None:
     match = UUID_RE.search(message)
     return match.group(0) if match else None
 
+DEFAULT_DB_URL = "postgresql://postgres:postgres@localhost:5432/support_agent"
+
+def _get_db_conn():
+    return psycopg2.connect(os.environ.get("DATABASE_URL", DEFAULT_DB_URL))
+
 def check_order_status(order_id: str) -> dict | None:
     #Return thr order record as a plain dict
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = _get_db_conn()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
@@ -35,7 +40,7 @@ def check_order_status(order_id: str) -> dict | None:
         conn.close()
 
 def initiate_refund(order_id: str, amount: float, reason: str = "") -> dict:
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = _get_db_conn()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SELECT total_amount FROM orders WHERE order_id = %s",(order_id,))
@@ -98,7 +103,7 @@ def initiate_refund(order_id: str, amount: float, reason: str = "") -> dict:
 
 def most_recent_order_for_customer(customer_id: str) -> dict | None:
     #Fall back when the customer doesn't give an order ID direclty
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = _get_db_conn()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
