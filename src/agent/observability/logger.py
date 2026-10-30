@@ -3,10 +3,7 @@ import time
 import functools
 from datetime import datetime, timezone
 
-try:
-    from src.agent.state import StepLog
-except ImportError:
-    from state import StepLog
+from src.agent.state import StepLog
 
 def with_logging(node_name: str):
     def decorator(fn):

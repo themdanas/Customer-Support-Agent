@@ -1,37 +1,18 @@
 from __future__ import annotations
 from src.agent.observability.logger import with_logging
-
-try:
-    from src.agent.state import ActionResult, EscalationRecord, EscalationPriority
-except ImportError:
-    from state import ActionResult, EscalationRecord, EscalationPriority
-
-try:
-    from src.agent.tools.order_tools import (
-        initiate_refund,
-        change_shipping_address,
-        report_lost_package,
-        report_damaged_item,
-        check_order_status,
-    )
-    from src.agent.tools.customer_tools import (
-        get_customer_profile,
-        get_customer_orders,
-        check_repeat_contact_escalation,
-    )
-except ImportError:
-    from tools.order_tools import (
-        initiate_refund,
-        change_shipping_address,
-        report_lost_package,
-        report_damaged_item,
-        check_order_status,
-    )
-    from tools.customer_tools import (
-        get_customer_profile,
-        get_customer_orders,
-        check_repeat_contact_escalation,
-    )
+from src.agent.state import ActionResult, EscalationRecord, EscalationPriority
+from src.agent.tools.order_tools import (
+    initiate_refund,
+    change_shipping_address,
+    report_lost_package,
+    report_damaged_item,
+    check_order_status,
+)
+from src.agent.tools.customer_tools import (
+    get_customer_profile,
+    get_customer_orders,
+    check_repeat_contact_escalation,
+)
 
 TOOL_REGISTRY = {
     "initiate_refund": initiate_refund,

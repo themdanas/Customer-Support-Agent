@@ -3,24 +3,14 @@ from typing import Optional
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-try:
-    from src.agent.state import AgentState, ActionType
-    from src.agent.llm_client import LLMClient
-    from src.agent.router import make_router_node
-    from src.agent.retrieval import retrieval_node
-    from src.agent.reasoner import make_reasoner_node
-    from src.agent.action import action_node
-    from src.agent.human_approval import human_approval_node
-    from src.agent.response_builder import response_builder_node
-except ImportError:
-    from state import AgentState, ActionType
-    from llm_client import LLMClient
-    from router import make_router_node
-    from retrieval import retrieval_node
-    from reasoner import make_reasoner_node
-    from action import action_node
-    from human_approval import human_approval_node
-    from response_builder import response_builder_node
+from src.agent.state import AgentState, ActionType
+from src.agent.llm_client import LLMClient
+from src.agent.router import make_router_node
+from src.agent.retrieval import retrieval_node
+from src.agent.reasoner import make_reasoner_node
+from src.agent.action import action_node
+from src.agent.human_approval import human_approval_node
+from src.agent.response_builder import response_builder_node
 
 
 def route_after_reasoner(state: dict) -> str:

@@ -1,5 +1,13 @@
 from __future__ import annotations
+import sys
+from pathlib import Path
 import argparse
+
+# Ensure project root is on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.agent.tools.policy_rag.vector_store import PolicyVectorStore
 
 #Each entry: (query, expected_policy_id)

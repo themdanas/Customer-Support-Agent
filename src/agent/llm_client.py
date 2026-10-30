@@ -1,10 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
-try:
-    from src.agent.state import ActionType, ReasonerDecision
-except ImportError:
-    from state import ActionType, ReasonerDecision
+from src.agent.state import ActionType, ReasonerDecision
 
 class LLMClient(ABC):
     @abstractmethod

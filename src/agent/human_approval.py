@@ -6,20 +6,12 @@ from typing import Optional, Any
 from langgraph.types import interrupt, Command
 
 from src.agent.observability.logger import with_logging
-try:
-    from src.agent.state import (
-        ApprovalDecision,
-        ConversationStatus,
-        EscalationRecord,
-        EscalationPriority,
-    )
-except ImportError:
-    from state import (
-        ApprovalDecision,
-        ConversationStatus,
-        EscalationRecord,
-        EscalationPriority,
-    )
+from src.agent.state import (
+    ApprovalDecision,
+    ConversationStatus,
+    EscalationRecord,
+    EscalationPriority,
+)
 
 
 DEFAULT_DB_URL = "postgresql://postgres:postgres@localhost:5432/support_agent"

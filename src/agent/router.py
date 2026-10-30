@@ -1,9 +1,6 @@
 from __future__ import annotations
 from src.agent.observability.logger import with_logging
-try:
-    from src.agent.llm_client import LLMClient
-except ImportError:
-    from llm_client import LLMClient
+from src.agent.llm_client import LLMClient
 
 def make_router_node(llm: LLMClient):
     @with_logging("router")

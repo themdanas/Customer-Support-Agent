@@ -6,7 +6,13 @@ graph traces, and simulate human supervisor approval workflows in real time.
 """
 from __future__ import annotations
 import sys
+from pathlib import Path
 import uuid
+
+# Ensure repository root is on sys.path regardless of execution method
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.agent.graph import build_graph
 from src.agent.llm_client import MockLLMClient

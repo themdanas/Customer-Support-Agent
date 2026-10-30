@@ -1,9 +1,6 @@
 from __future__ import annotations
 from src.agent.observability.logger import with_logging
-try:
-    from src.agent.state import ActionType, ConversationStatus
-except ImportError:
-    from state import ActionType, ConversationStatus
+from src.agent.state import ActionType, ConversationStatus
 
 @with_logging("response_builder")
 def response_builder_node(state: dict) -> dict:
