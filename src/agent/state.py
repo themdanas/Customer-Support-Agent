@@ -95,6 +95,8 @@ class AgentState(TypedDict, total=False):
     action_result: Optional[ActionResult]
     escalation: Optional[EscalationRecord]
     approval_decision: Optional[ApprovalDecision]
+    ticket_count: Optional[int]
+    customer_profile: Optional[dict]
     final_response: Optional[str]
     status: ConversationStatus
     trace: list[StepLog]

@@ -3,28 +3,38 @@ import argparse
 import re
 from pathlib import Path
 
-from vector_store import PolicyVectorStore
+try:
+    from src.agent.tools.policy_rag.vector_store import PolicyVectorStore
+except ImportError:
+    from vector_store import PolicyVectorStore
+
 
 def chunk_markdown(path: Path) -> list[dict]:
-    text = path.read_text()
-    #split on '##' headings, keeping the heading with its body
+    """
+    Splits policy markdown files into discrete, coherent chunks based on '##' headers.
+    Skips the root '# Document Title' header so each chunk is a distinct, self-contained rule.
+    """
+    text = path.read_text(encoding="utf-8")
     sections = re.split(r"\n(?=##)", text)
     chunks = []
-    for i, section in enumerate(sections):
+    chunk_index = 1
+    for section in sections:
         section = section.strip()
-        if not section or section.startswith('#'):
-            #skip the top-level "# Refund Policy" title-only fragment
-            if section.startswith("#") and "##" not in section:
-                continue
+        if not section:
+            continue
+        # Skip top-level title header (e.g. '# Refund Policy') if it has no subsection content
+        if section.startswith("#") and not section.startswith("##"):
+            continue
 
-            chunks.append(
-                {
-                    "policy_id": f"{path.stem} :: chunk_{i}",
-                    "text": section,
-                    "source_doc": path.name,
-                }
-            )
-        return chunks
+        chunks.append(
+            {
+                "policy_id": f"{path.stem}::chunk_{chunk_index}",
+                "text": section,
+                "source_doc": path.name,
+            }
+        )
+        chunk_index += 1
+    return chunks
 
 
 def main():
@@ -45,7 +55,6 @@ def main():
     store.save(args.out)
     print(f"Indexed {len(all_chunks)} chunks total -> {args.out}")
 
+
 if __name__ == "__main__":
     main()
-
-        
