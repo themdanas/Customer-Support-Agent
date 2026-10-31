@@ -3,6 +3,7 @@ import io
 from unittest.mock import patch
 from src.cli import main, format_trace_step
 from src.agent.state import StepLog
+from src.agent.llm_client import MockLLMClient
 from datetime import datetime, timezone
 
 
@@ -28,6 +29,7 @@ def test_cli_simple_exit(monkeypatch, capsys):
 
 
 def test_cli_single_turn_interaction(monkeypatch, capsys):
+    monkeypatch.setattr("src.cli.get_llm_client", lambda: MockLLMClient())
     inputs = iter(["Where is my order?", "quit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
 

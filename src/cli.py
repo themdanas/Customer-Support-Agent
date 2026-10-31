@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.agent.graph import build_graph
-from src.agent.llm_client import MockLLMClient
+from src.agent.llm_client import get_llm_client
 from src.agent.persistence import get_checkpointer, get_thread_config, close_connection_pool
 from src.agent.human_approval import resume_approval
 from src.agent.state import ConversationStatus
@@ -33,7 +33,8 @@ def main():
 
     # 1. Initialize checkpointer (Postgres with MemorySaver fallback)
     checkpointer = get_checkpointer(use_postgres=True)
-    llm = MockLLMClient()
+    llm = get_llm_client()
+    print(f"Loaded LLM Provider: {type(llm).__name__}")
     app = build_graph(llm, checkpointer=checkpointer)
 
     conversation_id = f"conv-{uuid.uuid4().hex[:8]}"
