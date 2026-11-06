@@ -13,6 +13,7 @@ from src.agent.tools.customer_tools import (
     get_customer_orders,
     check_repeat_contact_escalation,
 )
+from src.agent.tools.vision_tools import inspect_damage_photo
 
 TOOL_REGISTRY = {
     "initiate_refund": initiate_refund,
@@ -20,6 +21,7 @@ TOOL_REGISTRY = {
     "change_shipping_address": change_shipping_address,
     "report_lost_package": report_lost_package,
     "report_damaged_item": report_damaged_item,
+    "inspect_damage_photo": inspect_damage_photo,
     "check_order_status": check_order_status,
     "get_customer_profile": get_customer_profile,
     "get_customer_orders": get_customer_orders,
@@ -47,6 +49,17 @@ def action_node(state: dict) -> dict:
         getattr(decision, "tool_args", {})
         or (decision.get("tool_args", {}) if isinstance(decision, dict) else {})
     )
+
+    # Automatic parameter enrichment from state context
+    if tool_name == "report_damaged_item":
+        if not tool_args.get("image_source") and state.get("image_source"):
+            tool_args["image_source"] = state["image_source"]
+            tool_args["photo_provided"] = True
+        if not tool_args.get("order_id") and state.get("order_context"):
+            ctx = state["order_context"]
+            resolved_id = ctx.get("order_id") if isinstance(ctx, dict) else getattr(ctx, "order_id", None)
+            if resolved_id:
+                tool_args["order_id"] = str(resolved_id)
 
     tool_fn = TOOL_REGISTRY.get(tool_name)
     if tool_fn is None:

@@ -10,7 +10,7 @@ _POOL: Optional[ConnectionPool] = None
 _CHECKPOINTER: Optional[BaseCheckpointSaver] = None
 
 def get_connection_pool(database_url: Optional[str] = None) -> ConnectionPool:
-    """Returns or creates a shared ConnectionPool for PostgreSQL checkpointing."""
+    """Returns or creates a shared ConnectionPool for PostgreSQL checkpointing with automatic health-checking."""
     global _POOL
     if _POOL is None or _POOL.closed:
         url = database_url or os.environ.get(
@@ -18,11 +18,15 @@ def get_connection_pool(database_url: Optional[str] = None) -> ConnectionPool:
         )
         _POOL = ConnectionPool(
             conninfo=url,
+            min_size=1,
             max_size=10,
+            check=ConnectionPool.check_connection,
+            reconnect_timeout=15.0,
             open=True,
             kwargs={"autocommit": True},
         )
     return _POOL
+
 
 def close_connection_pool() -> None:
     """Closes the shared ConnectionPool if open."""
@@ -32,18 +36,21 @@ def close_connection_pool() -> None:
     _POOL = None
     _CHECKPOINTER = None
 
+
 def get_checkpointer(
     use_postgres: bool = True,
     database_url: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> BaseCheckpointSaver:
     """
     Returns an initialized LangGraph checkpointer.
     
     If use_postgres is True and database is reachable, returns an initialized
-    PostgresSaver. Falls back to MemorySaver if disabled or if connection fails.
+    PostgresSaver with auto-reconnecting pool. Falls back to MemorySaver if disabled
+    or if connection fails.
     """
     global _CHECKPOINTER
-    if _CHECKPOINTER is not None:
+    if _CHECKPOINTER is not None and not force_refresh:
         return _CHECKPOINTER
 
     if use_postgres:

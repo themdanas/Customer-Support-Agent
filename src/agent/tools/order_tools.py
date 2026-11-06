@@ -205,14 +205,38 @@ def report_lost_package(order_id: str, notes: str = "") -> dict[str, Any]:
 def report_damaged_item(
     order_id: str,
     photo_provided: bool = False,
+    image_source: Optional[str] = None,
     notes: str = "",
 ) -> dict[str, Any]:
     """
     Enforces Policy (Refund Policy - Damaged Items):
     If an item arrives damaged, photographic evidence is required.
+    Supports automated vision verification via inspect_damage_photo.
     Reports within 14 days of delivery qualify for replacement or refund.
     Reports beyond 14 days require human supervisor escalation.
     """
+    # 1. Automated Vision Inspection if image source is provided
+    if image_source:
+        try:
+            from src.agent.tools.vision_tools import inspect_damage_photo
+            vision_result = inspect_damage_photo(image_source)
+            if vision_result.get("verified", False):
+                photo_provided = True
+                notes = f"Vision inspection confirmed damage: {vision_result.get('damage_description')}"
+            else:
+                return {
+                    "tool_name": "report_damaged_item",
+                    "success": False,
+                    "output": (
+                        f"Photo was reviewed, but visible damage could not be clearly confirmed "
+                        f"({vision_result.get('damage_description')}). Flagged for human supervisor review."
+                    ),
+                    "requires_escalation": True,
+                    "escalation_reason": "Visual damage verification unconfirmed; requires human inspection.",
+                }
+        except Exception as e:
+            photo_provided = False
+
     conn = _get_db_conn()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -245,10 +269,13 @@ def report_damaged_item(
                 is_within_14_days = False
 
         if is_within_14_days:
+            output_msg = f"Damaged item claim verified for order {order_id}. Full replacement or refund authorized."
+            if notes:
+                output_msg += f" ({notes})"
             return {
                 "tool_name": "report_damaged_item",
                 "success": True,
-                "output": f"Damaged item claim verified for order {order_id}. Full replacement or refund authorized.",
+                "output": output_msg,
                 "requires_escalation": False,
             }
         else:

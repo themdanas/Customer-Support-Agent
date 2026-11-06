@@ -45,6 +45,7 @@ class LLMClient(ABC):
         message: str,
         order_context: dict | None,
         policy_context: list[str],
+        image_source: Optional[str] = None,
     ) -> ReasonerDecision:
         """Analyze message, policy, and order state to decide on the next graph action."""
         ...
@@ -68,12 +69,30 @@ class MockLLMClient(LLMClient):
         message: str,
         order_context: dict | None,
         policy_context: list[str],
+        image_source: Optional[str] = None,
     ) -> ReasonerDecision:
         text = message.lower()
         if "sue" in text or "furious" in text or "terrible" in text:
             return ReasonerDecision(
                 action_type=ActionType.ESCALATE,
                 rationale="Detected angry sentiment or legal threat; escalating per policy.",
+            )
+
+        if ("damage" in text or "broken" in text or "defect" in text) and (image_source or "image" in text or "photo" in text):
+            resolved_order_id = (
+                order_context.get("order_id") if isinstance(order_context, dict)
+                else getattr(order_context, "order_id", "mock-order-id")
+            ) if order_context else "mock-order-id"
+            return ReasonerDecision(
+                action_type=ActionType.TOOL_CALL,
+                tool_name="report_damaged_item",
+                tool_args={
+                    "order_id": str(resolved_order_id),
+                    "photo_provided": True,
+                    "image_source": image_source or "mock_photo.png",
+                    "notes": "Customer submitted photo of damaged item.",
+                },
+                rationale="Customer reported damaged item with photo evidence.",
             )
 
         if order_context is not None:
@@ -170,6 +189,7 @@ class GroqLLMClient(LLMClient):
         message: str,
         order_context: dict | None,
         policy_context: list[str],
+        image_source: Optional[str] = None,
     ) -> ReasonerDecision:
         """
         Synthesizes policies and order details to choose an action, invoking tools or escalating when required.
@@ -181,6 +201,23 @@ class GroqLLMClient(LLMClient):
         )
         order_text = json.dumps(order_context, default=str) if order_context else "None"
 
+        # Check if image_source was provided or embedded in message text
+        if not image_source:
+            import re
+            m = re.search(r"\[Image attached:\s*([^\]]+)\]", message)
+            if m:
+                image_source = m.group(1).strip()
+
+        image_info = ""
+        if image_source:
+            image_info = (
+                f"\n### Customer Attached Photo Evidence:\n"
+                f"- Image Source: {image_source}\n"
+                f"- Photo Status: PROVIDED by customer.\n"
+                f"INSTRUCTION: The customer has submitted photographic evidence. "
+                f"Call report_damaged_item with order_id, photo_provided=True, and image_source='{image_source}'.\n"
+            )
+
         system_prompt = f"""You are an expert customer support agent for an e-commerce company.
 Your role is to reason through customer inquiries strictly according to company policies and order data.
 
@@ -189,17 +226,21 @@ Your role is to reason through customer inquiries strictly according to company 
 
 ### Customer Order Context:
 {order_text}
-
+{image_info}
 ### Operational Tools Available:
 - initiate_refund(order_id: str, amount: float, reason: str): Process or request a refund.
 - change_shipping_address(order_id: str, new_address: str): Change shipping destination (Allowed ONLY if order status is 'pending').
 - report_lost_package(order_id: str, notes: str): Flag package as lost for carrier investigation.
-- report_damaged_item(order_id: str, photo_provided: bool, notes: str): Report damaged/broken goods.
+- report_damaged_item(order_id: str, photo_provided: bool, image_source: str, notes: str): Report damaged/broken goods. Automated vision will inspect image_source if provided.
 - check_order_status(order_id: str): Query tracking information.
 
 ### Decision Guidelines:
-1. **TOOL CALL**: If customer requests an actionable task (e.g., refund, address change, report issue), set action_type="tool_call", specify tool_name and valid tool_args.
-2. **ANSWER**: If customer asks an informational question (e.g. return policy, tracking explanation), set action_type="answer" and provide a helpful, polite draft_response grounded in the policy context.
+1. **TOOL CALL**: Call an operational tool when the customer requests an actionable task and prerequisites are met:
+   - For refunds: call initiate_refund.
+   - For address changes: call change_shipping_address.
+   - For lost packages: call report_lost_package.
+   - For damaged items: ONLY call report_damaged_item if the customer has provided photo evidence (an image file, URL, or confirmation of photo). If image_source is available, pass it into tool_args. If the customer reports damage but HAS NOT provided photos or an image link yet, DO NOT call report_damaged_item. Instead, choose action_type="answer" and warmly, empathetically ask the customer for photographic evidence.
+2. **ANSWER**: If customer asks an informational question (e.g. return policy, tracking explanation) or needs to provide required evidence/information (e.g. photos of damage, order ID), set action_type="answer" and provide a warm, empathetic draft_response grounded in the policy context.
 3. **ESCALATE**: If customer is furious, threatens bad reviews or legal action, or if their situation cannot be resolved under policy, set action_type="escalate".
 
 You MUST reply with a valid JSON object matching this exact schema:

@@ -100,6 +100,24 @@ def test_response_builder_node_escalate():
     assert updated_state["status"] == ConversationStatus.ESCALATED
     assert "human agent" in updated_state["final_response"]
 
+
+def test_response_builder_instructional_guidance_no_robotic_prefix():
+    from src.agent.state import ActionResult
+    action_result = ActionResult(
+        tool_name="report_damaged_item",
+        success=False,
+        output="Please provide photographic evidence of the damaged or defective item. Once photos are submitted, we will immediately process your replacement or refund.",
+        requires_escalation=False,
+    )
+    state = {
+        "decision": ReasonerDecision(action_type=ActionType.TOOL_CALL, rationale="Checking damage"),
+        "action_result": action_result,
+    }
+    updated_state = response_builder_node(state)
+    assert updated_state["status"] == ConversationStatus.RESOLVED
+    assert updated_state["final_response"].startswith("Please provide photographic evidence")
+    assert "Unable to complete request:" not in updated_state["final_response"]
+
 def test_full_graph_execution_order_status_escalation_flow():
     """When order is not found, MockLLM escalates to human."""
     llm = MockLLMClient()

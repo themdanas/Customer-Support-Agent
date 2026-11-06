@@ -34,7 +34,11 @@ def response_builder_node(state: dict) -> dict:
             state["final_response"] = action_result.output
             state["status"] = ConversationStatus.RESOLVED
         else:
-            state["final_response"] = f"Unable to complete request: {action_result.output}"
+            output = action_result.output
+            if output.startswith("Please ") or "under company policy" in output.lower():
+                state["final_response"] = output
+            else:
+                state["final_response"] = f"I was unable to complete that request: {output}"
             state["status"] = ConversationStatus.RESOLVED
         return state
 

@@ -48,8 +48,25 @@ def retrieval_node(state: dict) -> dict:
         except Exception:
             order = None
 
-    # Fallback to customer's most recent order when intent implies an order inquiry
-    if order is None and intent == "order_status" and state.get("customer_id"):
+    # Multi-turn preservation: Retain existing order_context from previous turns
+    if order is None and state.get("order_context"):
+        order = state.get("order_context")
+
+    # Multi-turn search: Look backward through earlier messages if order was mentioned earlier
+    if order is None and messages:
+        for prev in reversed(messages[:-1]):
+            prev_content = prev.get("content", "")
+            prev_id = extract_order_id(prev_content)
+            if prev_id:
+                try:
+                    order = check_order_status(prev_id)
+                    if order:
+                        break
+                except Exception:
+                    pass
+
+    # Fallback to customer's most recent order when intent implies an order or refund inquiry
+    if order is None and intent in ("order_status", "refund_request") and state.get("customer_id"):
         try:
             order = most_recent_order_for_customer(state["customer_id"])
         except Exception:

@@ -100,6 +100,7 @@ class AgentState(TypedDict, total=False):
     final_response: Optional[str]
     status: ConversationStatus
     trace: list[StepLog]
+    image_source: Optional[str]
 
     
 

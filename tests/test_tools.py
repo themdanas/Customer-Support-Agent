@@ -181,3 +181,72 @@ def test_report_damaged_item_with_photo_after_14_days_escalates(db_conn):
     assert result["success"] is True
     assert result["requires_escalation"] is True
     assert "> 14 days" in result["escalation_reason"]
+
+
+def test_encode_image_to_data_uri_and_inspect_fallback():
+    from src.agent.tools.vision_tools import encode_image_to_data_uri, inspect_damage_photo
+
+    # 1. URL pass-through
+    url = "https://example.com/item.png"
+    assert encode_image_to_data_uri(url) == url
+
+    # 2. Raw base64 wrapping
+    raw_b64 = "A" * 70
+    assert encode_image_to_data_uri(raw_b64).startswith("data:image/png;base64,")
+
+    # 3. Offline fallback
+    res = inspect_damage_photo(url, api_key="")
+    assert res["verified"] is True
+    assert "offline verification" in res["damage_description"]
+
+
+def test_report_damaged_item_with_vision_image_source(db_conn, monkeypatch):
+    from src.agent.tools import vision_tools
+
+    monkeypatch.setattr(
+        vision_tools,
+        "inspect_damage_photo",
+        lambda img, product_name=None: {
+            "verified": True,
+            "has_damage": True,
+            "confidence": 0.95,
+            "damage_description": "Severe crack across screen.",
+            "summary": "Damage confirmed.",
+        },
+    )
+
+    cust_id = create_customer(db_conn)
+    recent_delivery = datetime.now(timezone.utc) - timedelta(days=3)
+    order_id = create_order(db_conn, cust_id, status="delivered", delivered_at=recent_delivery)
+
+    result = report_damaged_item(order_id, image_source="https://example.com/broken_screen.jpg")
+    assert result["success"] is True
+    assert result["requires_escalation"] is False
+    assert "Full replacement or refund authorized" in result["output"]
+    assert "Severe crack across screen" in result["output"]
+
+
+def test_report_damaged_item_unverified_vision_escalates(db_conn, monkeypatch):
+    from src.agent.tools import vision_tools
+
+    monkeypatch.setattr(
+        vision_tools,
+        "inspect_damage_photo",
+        lambda img, product_name=None: {
+            "verified": False,
+            "has_damage": False,
+            "confidence": 0.2,
+            "damage_description": "Item appears intact in packaging.",
+            "summary": "Damage unconfirmed.",
+        },
+    )
+
+    cust_id = create_customer(db_conn)
+    recent_delivery = datetime.now(timezone.utc) - timedelta(days=3)
+    order_id = create_order(db_conn, cust_id, status="delivered", delivered_at=recent_delivery)
+
+    result = report_damaged_item(order_id, image_source="https://example.com/intact.jpg")
+    assert result["success"] is False
+    assert result["requires_escalation"] is True
+    assert "Flagged for human supervisor review" in result["output"]
+    assert "requires human inspection" in result["escalation_reason"]

@@ -146,3 +146,84 @@ def test_e2e_journey_repeat_contacts_detected_in_retrieval(db_conn):
     # Retrieval should have enriched ticket_count = 2
     assert result["ticket_count"] == 2
 
+
+def test_e2e_journey_damaged_item_multi_turn_with_photo_submission(db_conn, tmp_path, monkeypatch):
+    from src.agent.tools import vision_tools
+    monkeypatch.setattr(
+        vision_tools,
+        "inspect_damage_photo",
+        lambda img, product_name=None, api_key=None: {
+            "verified": True,
+            "has_damage": True,
+            "confidence": 0.98,
+            "damage_description": "Severe crack across screen",
+            "summary": "Physical damage confirmed",
+        },
+    )
+
+    cust_id, order_id = setup_customer_and_order(db_conn, status="delivered")
+    img_file = tmp_path / "broken_phone.jpg"
+    img_file.write_bytes(b"\xff\xd8\xffdummyjpg")
+
+    class MultiTurnDamagedLLM(LLMClient):
+        def classify_intent(self, message: str, labels: list[str]) -> str:
+            return "refund_request"
+
+        def decide(self, message: str, order_context: dict | None, policy_context: list[str], image_source: str | None = None) -> ReasonerDecision:
+            if image_source or "image attached" in message.lower():
+                resolved_id = order_context.get("order_id") if order_context else order_id
+                return ReasonerDecision(
+                    action_type=ActionType.TOOL_CALL,
+                    tool_name="report_damaged_item",
+                    tool_args={
+                        "order_id": str(resolved_id),
+                        "photo_provided": True,
+                        "image_source": image_source or str(img_file),
+                    },
+                    rationale="Customer submitted photo of damaged goods.",
+                )
+            return ReasonerDecision(
+                action_type=ActionType.ANSWER,
+                rationale="Asking for photo evidence",
+                draft_response="Please provide photographic evidence of the damaged or defective item.",
+            )
+
+    llm = MultiTurnDamagedLLM()
+    app = build_graph(llm, checkpointer=MemorySaver())
+
+    thread_id = str(uuid.uuid4())
+    config = get_thread_config(thread_id)
+
+    # Turn 1: Customer reports damage without photo
+    turn1_state = {
+        "conversation_id": thread_id,
+        "customer_id": cust_id,
+        "messages": [{"role": "user", "content": f"My item for order {order_id} arrived completely smashed."}],
+    }
+    turn1_result = app.invoke(turn1_state, config=config)
+    assert "photographic evidence" in turn1_result["final_response"].lower()
+
+    # Turn 2: Customer submits image via /image input
+    turn2_messages = list(turn1_result["messages"])
+    turn2_messages.append({
+        "role": "user",
+        "content": f"[Image attached: {img_file}] Here is the photo of the broken item.",
+        "image_source": str(img_file),
+    })
+    turn2_state = {
+        "conversation_id": thread_id,
+        "customer_id": cust_id,
+        "messages": turn2_messages,
+        "image_source": str(img_file),
+    }
+
+    turn2_result = app.invoke(turn2_state, config=config)
+
+    # Retrieval should have retained the order_context across turns
+    assert turn2_result.get("order_context") is not None
+    assert str(turn2_result["order_context"]["order_id"]) == order_id
+
+    # Damaged claim authorized!
+    assert turn2_result["status"] == ConversationStatus.RESOLVED
+    assert "replacement or refund authorized" in turn2_result["final_response"].lower()
+
