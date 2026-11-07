@@ -185,25 +185,20 @@ def main():
             if not user_text and not image_source:
                 continue
 
+            new_user_msg = {"role": "user", "content": user_text}
             if image_source:
-                # Check local file existence if not a remote URL
-                if not image_source.startswith(("http://", "https://", "data:")):
-                    p = Path(image_source).expanduser()
-                    if not p.is_file():
-                        print(f"⚠️  [Notice] File '{image_source}' was not found on disk. Proceeding anyway.")
-                print(f"📎 [Photo Attached]: {image_source}")
-                user_content = f"[Image attached: {image_source}] {user_text}".strip()
-            else:
-                user_content = user_text
-
-            messages.append({"role": "user", "content": user_content, "image_source": image_source})
+                new_user_msg["image_source"] = image_source
+            messages.append(new_user_msg)
 
             current_state = {
                 "conversation_id": conversation_id,
                 "customer_id": customer_id,
                 "messages": messages,
-                "image_source": image_source,
             }
+            # Only pass image_source when a new image is attached so we don't overwrite
+            # an image attached in an earlier turn with None!
+            if image_source:
+                current_state["image_source"] = image_source
 
             # Invoke the LangGraph workflow with automatic recovery on transient DB restarts
             try:
@@ -219,11 +214,11 @@ def main():
                 else:
                     raise
 
-            # Print detailed execution trace
+            # Print detailed execution trace (only the steps from the latest turn)
             trace = result.get("trace", [])
             if trace:
                 print("\n--- Execution Trace ---")
-                for log in trace:
+                for log in trace[-6:]:
                     print(format_trace_step(log))
                 print("-----------------------")
 
@@ -257,7 +252,11 @@ def main():
                 "final_response", "I apologize, but I am unable to process your request."
             )
             last_assistant_response = final_response
-            messages.append({"role": "assistant", "content": final_response})
+            # Sync local messages list with graph's authoritative messages list
+            if result.get("messages"):
+                messages = list(result["messages"])
+            else:
+                messages.append({"role": "assistant", "content": final_response})
             print(f"\nAgent: {final_response}\n")
     finally:
         close_connection_pool()

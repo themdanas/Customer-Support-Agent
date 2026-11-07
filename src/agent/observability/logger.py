@@ -21,7 +21,9 @@ def with_logging(node_name: str):
                 raise
             finally:
                 latency_ms = (time.perf_counter() - t0) * 1000
-                output_summary = _summarize(result, node_name)
+                # Merge state and result view so _summarize works for both delta and full-state returns
+                combined_view = {**state, **(result if isinstance(result, dict) else {})}
+                output_summary = _summarize(combined_view, node_name)
                 log = StepLog(
                     node_name=node_name,
                     started_at=started,
@@ -30,8 +32,10 @@ def with_logging(node_name: str):
                     output_summary=output_summary,
                     error=error,
                 )
-                result.setdefault("trace", [])
-                result["trace"].append(log)
+                # Copy existing trace list so we never mutate `state["trace"]` in-place via reference aliasing
+                existing_trace = list(result.get("trace") or state.get("trace") or [])
+                existing_trace.append(log)
+                result["trace"] = existing_trace
 
             return result
         return wrapper

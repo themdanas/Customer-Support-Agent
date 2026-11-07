@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import re
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -29,6 +30,27 @@ def load_env_file(path: str = ".env") -> None:
 
 
 load_env_file()
+
+
+def _normalize_order_context(order_context: Any) -> Optional[dict]:
+    """Converts OrderRecord Pydantic models or dicts into a clean, JSON-serializable dict."""
+    if order_context is None:
+        return None
+    if isinstance(order_context, dict):
+        return order_context
+    if hasattr(order_context, "model_dump"):
+        return order_context.model_dump(mode="json")
+    if hasattr(order_context, "dict"):
+        return order_context.dict()
+    return {
+        "order_id": getattr(order_context, "order_id", None),
+        "customer_id": getattr(order_context, "customer_id", None),
+        "status": getattr(order_context, "status", None),
+        "total_amount": getattr(order_context, "total_amount", None),
+        "placed_at": str(getattr(order_context, "placed_at", "")),
+        "delivered_at": str(getattr(order_context, "delivered_at", "")),
+        "items": getattr(order_context, "items", []),
+    }
 
 
 class LLMClient(ABC):
@@ -78,9 +100,12 @@ class MockLLMClient(LLMClient):
                 rationale="Detected angry sentiment or legal threat; escalating per policy.",
             )
 
-        if ("damage" in text or "broken" in text or "defect" in text) and (image_source or "image" in text or "photo" in text):
+        if ("damage" in text or "broken" in text or "defect" in text) and (
+            image_source or "image" in text or "photo" in text
+        ):
             resolved_order_id = (
-                order_context.get("order_id") if isinstance(order_context, dict)
+                order_context.get("order_id")
+                if isinstance(order_context, dict)
                 else getattr(order_context, "order_id", "mock-order-id")
             ) if order_context else "mock-order-id"
             return ReasonerDecision(
@@ -164,8 +189,10 @@ class GroqLLMClient(LLMClient):
         prompt = (
             f"You are a customer support routing classifier.\n"
             f"Allowed labels: [{labels_str}]\n"
-            f"Classify the customer's message into exactly one of the allowed labels.\n"
-            f"Customer message: \"{message}\"\n\n"
+            f"Classify the customer's current message into exactly one of the allowed labels.\n"
+            f"If the message is a short follow-up (like providing an Order ID, photo, or confirmation), "
+            f"preserve the active intent from the recent context.\n"
+            f"Input: \"{message}\"\n\n"
             f"Reply with ONLY the exact label name, with no quotes or extra text."
         )
 
@@ -192,18 +219,19 @@ class GroqLLMClient(LLMClient):
         image_source: Optional[str] = None,
     ) -> ReasonerDecision:
         """
-        Synthesizes policies and order details to choose an action, invoking tools or escalating when required.
+        Synthesizes policies, multi-turn history, and order details to choose an action,
+        invoking tools or escalating when required.
         """
         policies_text = (
             "\n---\n".join(policy_context)
             if policy_context
             else "No specific policy retrieved for this query."
         )
-        order_text = json.dumps(order_context, default=str) if order_context else "None"
+        normalized_order = _normalize_order_context(order_context)
+        order_text = json.dumps(normalized_order, default=str) if normalized_order else "None"
 
         # Check if image_source was provided or embedded in message text
         if not image_source:
-            import re
             m = re.search(r"\[Image attached:\s*([^\]]+)\]", message)
             if m:
                 image_source = m.group(1).strip()
@@ -213,18 +241,19 @@ class GroqLLMClient(LLMClient):
             image_info = (
                 f"\n### Customer Attached Photo Evidence:\n"
                 f"- Image Source: {image_source}\n"
-                f"- Photo Status: PROVIDED by customer.\n"
-                f"INSTRUCTION: The customer has submitted photographic evidence. "
-                f"Call report_damaged_item with order_id, photo_provided=True, and image_source='{image_source}'.\n"
+                f"- Photo Status: PROVIDED by customer in this session.\n"
+                f"INSTRUCTION: If the customer is reporting or following up on a damaged/defective item "
+                f"and an Order ID is available in Customer Order Context, call report_damaged_item with "
+                f"order_id, photo_provided=True, and image_source='{image_source}'.\n"
             )
 
-        system_prompt = f"""You are an expert customer support agent for an e-commerce company.
-Your role is to reason through customer inquiries strictly according to company policies and order data.
+        system_prompt = f"""You are an expert, stateful customer support agent for an e-commerce company.
+Your role is to reason through customer inquiries strictly according to company policies, conversation history, and verified order data.
 
 ### Relevant Company Policies:
 {policies_text}
 
-### Customer Order Context:
+### Customer Order Context (VERIFIED IN DATABASE):
 {order_text}
 {image_info}
 ### Operational Tools Available:
@@ -234,14 +263,18 @@ Your role is to reason through customer inquiries strictly according to company 
 - report_damaged_item(order_id: str, photo_provided: bool, image_source: str, notes: str): Report damaged/broken goods. Automated vision will inspect image_source if provided.
 - check_order_status(order_id: str): Query tracking information.
 
-### Decision Guidelines:
-1. **TOOL CALL**: Call an operational tool when the customer requests an actionable task and prerequisites are met:
-   - For refunds: call initiate_refund.
-   - For address changes: call change_shipping_address.
-   - For lost packages: call report_lost_package.
-   - For damaged items: ONLY call report_damaged_item if the customer has provided photo evidence (an image file, URL, or confirmation of photo). If image_source is available, pass it into tool_args. If the customer reports damage but HAS NOT provided photos or an image link yet, DO NOT call report_damaged_item. Instead, choose action_type="answer" and warmly, empathetically ask the customer for photographic evidence.
-2. **ANSWER**: If customer asks an informational question (e.g. return policy, tracking explanation) or needs to provide required evidence/information (e.g. photos of damage, order ID), set action_type="answer" and provide a warm, empathetic draft_response grounded in the policy context.
-3. **ESCALATE**: If customer is furious, threatens bad reviews or legal action, or if their situation cannot be resolved under policy, set action_type="escalate".
+### Critical Multi-Turn Memory & Grounding Rules:
+1. **NEVER RE-ASK FOR KNOWN DATA**: If `Customer Order Context` above is not `None`, you ALREADY have the customer's `order_id`, `status`, `total_amount`, and `items`. NEVER ask the customer for their Order ID again. Use the `order_id` from `Customer Order Context` directly in your `tool_args` or `draft_response`.
+2. **CONNECT FOLLOW-UP REPLIES TO PRIOR TURNS**: Read the `Recent Conversation History` in the user prompt carefully.
+   - If the customer asked for a refund/address change/damage claim in Turn 1, and in Turn 2 they provide their Order ID or photo, immediately execute the requested `tool_call` now that you have the missing piece.
+   - If the customer asks for a refund without specifying a dollar amount, default `amount` to `total_amount` from `Customer Order Context`.
+3. **TOOL CALL**: Call an operational tool when the customer requests an actionable task and prerequisites are met:
+   - For refunds (non-damage): call `initiate_refund`.
+   - For address changes: call `change_shipping_address`.
+   - For lost packages: call `report_lost_package`.
+   - For damaged items: ONLY call `report_damaged_item` if `image_source` (photo evidence) has been provided in this turn or an earlier turn AND an order is known. If the customer reports damage but HAS NOT provided a photo yet, set `action_type="answer"` and warmly ask for a photo. If they provided a photo but `Customer Order Context` is `None`, set `action_type="answer"` and ask for their Order ID.
+4. **ANSWER**: If the customer asks an informational question or needs to provide missing required info (either Order ID when `Customer Order Context` is `None`, or a photo for a damage claim), set `action_type="answer"` and provide a warm, concise `draft_response`.
+5. **ESCALATE**: If the customer is furious, threatens legal action, or cannot be resolved under policy, set `action_type="escalate"`.
 
 You MUST reply with a valid JSON object matching this exact schema:
 {{
@@ -272,7 +305,7 @@ You MUST reply with a valid JSON object matching this exact schema:
                 draft_response=content,
             )
 
-        raw_action_type = parsed.get("action_type", "answer").lower()
+        raw_action_type = str(parsed.get("action_type", "answer")).lower()
         if raw_action_type == "tool_call":
             action_type = ActionType.TOOL_CALL
         elif raw_action_type == "escalate":
@@ -280,8 +313,33 @@ You MUST reply with a valid JSON object matching this exact schema:
         else:
             action_type = ActionType.ANSWER
 
+        tool_name = parsed.get("tool_name")
         tool_args = parsed.get("tool_args") or {}
-        # Normalize numeric types in tool arguments (e.g. refund amount)
+
+        # Deterministic backfill from verified session state so the LLM never drops pinned args
+        if action_type == ActionType.TOOL_CALL and normalized_order:
+            pinned_order_id = str(normalized_order.get("order_id", ""))
+            if pinned_order_id and not tool_args.get("order_id"):
+                tool_args["order_id"] = pinned_order_id
+
+            if tool_name == "initiate_refund":
+                raw_amt = tool_args.get("amount")
+                try:
+                    amt_val = float(raw_amt) if raw_amt is not None else 0.0
+                except (ValueError, TypeError):
+                    amt_val = 0.0
+                # If customer didn't specify a partial amount, default to full order total_amount
+                if amt_val <= 0.0 and normalized_order.get("total_amount"):
+                    amt_val = float(normalized_order["total_amount"])
+                tool_args["amount"] = amt_val
+                tool_args.setdefault("reason", "Customer requested refund")
+
+            elif tool_name == "report_damaged_item" and image_source:
+                tool_args.setdefault("photo_provided", True)
+                tool_args.setdefault("image_source", image_source)
+                tool_args.setdefault("notes", "Customer submitted photo evidence of damage.")
+
+        # Normalize numeric types in tool arguments even if order_context was None
         if "amount" in tool_args:
             try:
                 tool_args["amount"] = float(tool_args["amount"])
@@ -291,7 +349,7 @@ You MUST reply with a valid JSON object matching this exact schema:
         return ReasonerDecision(
             action_type=action_type,
             rationale=parsed.get("rationale", "LLM reasoning complete."),
-            tool_name=parsed.get("tool_name"),
+            tool_name=tool_name,
             tool_args=tool_args,
             draft_response=parsed.get("draft_response"),
         )

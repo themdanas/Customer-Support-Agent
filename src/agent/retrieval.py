@@ -1,7 +1,9 @@
+
 from __future__ import annotations
+from httpx import get
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from src.agent.observability.logger import with_logging
 from src.agent.tools.order_tools import (
@@ -25,6 +27,18 @@ def _get_policy_store():
                 _POLICY_STORE = None
     return _POLICY_STORE
 
+def _get_order_id_from_record(order: Any) -> Optional[list]:
+    if not order:
+        return None
+    if isinstance(order, dict):
+        return str(order.get("order_id")) if order.get("order_id") else None
+    return str(getattr(order, "order_id", None)) if getattr(order, "order_id", None) else None
+
+def _get_order_status_from_record(order: Any) -> Optional[str]:
+    if not order:
+        return None
+    status = order.get("status") if isinstance(order, dict) else getattr(order, "status", None)
+    return getattr(status, "value", str(status)) if status else None
 
 @with_logging("retrieval")
 def retrieval_node(state: dict) -> dict:
@@ -36,66 +50,87 @@ def retrieval_node(state: dict) -> dict:
     """
     intent = state.get("intent")
     messages = state.get("messages", [])
-    last_message = messages[-1]["content"] if messages else ""
+    last_message = messages[-1].get("content", "") if messages else ""
+    customer_id = state.get("customer_id")
+    existing_order = state.get("order_context")
 
     # 1. Order Context Retrieval
-    order_id = extract_order_id(last_message)
+    explicit_order_id = extract_order_id(last_message) if last_message else None
+    pinned_order_id = _get_order_id_from_record(existing_order)
+
     order = None
+    target_order_id = explicit_order_id or pinned_order_id
 
-    if order_id:
+    if target_order_id:
         try:
-            order = check_order_status(order_id)
+            order = check_order_status(target_order_id)
+        except Exception:
+            order = None
+        
+        #if db look up fails, still keep the order id for the next turn
+        if order is None and not explicit_order_id and existing_order is None:
+            order = existing_order
+
+    ORDER_INTENTS = {
+        "order_status",
+        "refund_request",
+        "damaged_item",
+        "address_change",
+        "lost_package",
+        }
+
+    if order is None and not explicit_order_id and intent in ORDER_INTENTS and customer_id:
+        try:
+            order = most_recent_order_for_customer(customer_id)
         except Exception:
             order = None
 
-    # Multi-turn preservation: Retain existing order_context from previous turns
-    if order is None and state.get("order_context"):
-        order = state.get("order_context")
-
-    # Multi-turn search: Look backward through earlier messages if order was mentioned earlier
-    if order is None and messages:
-        for prev in reversed(messages[:-1]):
-            prev_content = prev.get("content", "")
-            prev_id = extract_order_id(prev_content)
-            if prev_id:
-                try:
-                    order = check_order_status(prev_id)
-                    if order:
-                        break
-                except Exception:
-                    pass
-
-    # Fallback to customer's most recent order when intent implies an order or refund inquiry
-    if order is None and intent in ("order_status", "refund_request") and state.get("customer_id"):
+   #2. Context history and customber profile enrichment
+   # pyrefly: ignore[parse-error]
+   resolved_order_id = _get_order_id_from_record(order)
+   # pyrefly: ignore[parse-error]
+   ticket_count = 0
+   if resolved_order_id:
+    try:
+        from src.agent.tools.customer_tools import get_ticket_count_for_order
+        ticket_count = get_ticket_count_for_order(resolved_order_id)
+    except Exception:
+        ticket_count = state.get("ticket_count") or 0
+    
+    customer_profile = state.get("customer_profile")
+    if customer_profile is None and customer_id:
         try:
-            order = most_recent_order_for_customer(state["customer_id"])
+            from src.agent.tools.customer_tools import get_customer_profile
+            customer_profile = get_customer_profile(customer_id)
         except Exception:
-            order = None
+            customer_profile = None
 
-    state["order_context"] = order
-
-    # 2. Contact History Enrichment (Repeat Contact Escalation Rule)
-    resolved_order_id = (
-        order.get("order_id") if isinstance(order, dict) else getattr(order, "order_id", None)
-    )
-    if resolved_order_id:
-        try:
-            from src.agent.tools.customer_tools import get_ticket_count_for_order
-            state["ticket_count"] = get_ticket_count_for_order(str(resolved_order_id))
-        except Exception:
-            state["ticket_count"] = 0
-    else:
-        state["ticket_count"] = 0
-
-    # 3. Policy Context Retrieval
+    #context aware policy rag
+    policy_context = state.get("policy_context") or []
     store = _get_policy_store()
     if store and last_message:
-        try:
-            chunks = store.query(last_message, k=2)
-            state["policy_context"] = chunks
-        except Exception:
-            state["policy_context"] = []
-    else:
-        state.setdefault("policy_context", [])
+        # Enrich short follow-up replies ("Yes, here is the photo", "Can I change it?")
+        # with the classified intent and order status so vector search stays grounded.
+        order_status_str = _get_order_status_from_record(order)
+        query_parts = []
+        if intent:
+            query_parts.append(f"intent: {intent}")
+        if order_status_str:
+            query_parts.append(f"order status: {order_status_str}")
+        query_parts.append(last_message)
+        enriched_query = " | ".join(query_parts)
 
-    return state
+        try:
+            policy_context = store.query(enriched_query, k=2)
+        except Exception:
+            policy_context = []
+
+    # Return ONLY the updated state keys (Delta), NEVER `return state`
+    return {
+        "order_context": order,
+        "ticket_count": ticket_count,
+        "customer_profile": customer_profile,
+        "policy_context": policy_context,
+    }
+
+# pyrefly: ignore[parse-error]
