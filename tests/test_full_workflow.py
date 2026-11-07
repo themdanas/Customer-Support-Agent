@@ -227,3 +227,57 @@ def test_e2e_journey_damaged_item_multi_turn_with_photo_submission(db_conn, tmp_
     assert turn2_result["status"] == ConversationStatus.RESOLVED
     assert "replacement or refund authorized" in turn2_result["final_response"].lower()
 
+
+def test_e2e_journey_multi_turn_refund_preserves_order_context(db_conn):
+    """
+    Test multi-turn context retention across conversation turns:
+    - Turn 1: User asks about an order with an Order ID -> Agent responds with status.
+    - Turn 2: User asks "Can I get a refund of $20 for it?" (NO Order ID in Turn 2 message)
+              -> Agent remembers order_context from Turn 1, classifies intent as refund_request,
+                 and processes the refund without re-asking for the Order ID.
+    """
+    from src.agent.llm_client import MockLLMClient
+
+    cust_id, order_id = setup_customer_and_order(db_conn, status="delivered", amount=100.0)
+
+    llm = MockLLMClient()
+    app = build_graph(llm, checkpointer=MemorySaver())
+
+    thread_id = str(uuid.uuid4())
+    config = get_thread_config(thread_id)
+
+    # Turn 1: User provides Order ID and checks status
+    turn1_state = {
+        "conversation_id": thread_id,
+        "customer_id": cust_id,
+        "messages": [{"role": "user", "content": f"Where is my order {order_id}?"}],
+    }
+    turn1_result = app.invoke(turn1_state, config=config)
+
+    assert turn1_result["intent"] == "order_status"
+    assert turn1_result["order_context"] is not None
+    assert str(turn1_result["order_context"]["order_id"]) == order_id
+    assert "delivered" in turn1_result["final_response"].lower()
+
+    # Turn 2: User asks for refund without repeating the Order ID
+    turn2_messages = list(turn1_result["messages"])
+    turn2_messages.append({"role": "user", "content": "Can I get a refund of $20 for it?"})
+    turn2_state = {
+        "conversation_id": thread_id,
+        "customer_id": cust_id,
+        "messages": turn2_messages,
+    }
+
+    turn2_result = app.invoke(turn2_state, config=config)
+
+    # Context retention assertions
+    assert turn2_result["intent"] == "refund_request"
+    assert turn2_result.get("order_context") is not None
+    assert str(turn2_result["order_context"]["order_id"]) == order_id
+
+    # Financial guardrails & auto-approval assertions
+    assert turn2_result["status"] == ConversationStatus.RESOLVED
+    assert "refund" in turn2_result["final_response"].lower()
+    assert "approved" in turn2_result["final_response"].lower()
+    assert "$20.00" in turn2_result["final_response"]
+

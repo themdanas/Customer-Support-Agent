@@ -158,7 +158,7 @@ def main():
     try:
         while True:
             # If the agent just requested photo evidence, display a contextual prompt hint
-            if any(term in last_assistant_response.lower() for term in ("photo", "photographic", "picture", "evidence")):
+            if any(term in (last_assistant_response or "").lower() for term in ("photo", "photographic", "picture", "evidence")):
                 print("💡 [Tip: Attach your photo with '/image <path_or_url>' or paste the file path directly]")
 
             try:
@@ -185,7 +185,18 @@ def main():
             if not user_text and not image_source:
                 continue
 
-            new_user_msg = {"role": "user", "content": user_text}
+            if image_source:
+                # Check local file existence if not a remote URL
+                if not image_source.startswith(("http://", "https://", "data:")):
+                    p = Path(image_source).expanduser()
+                    if not p.is_file():
+                        print(f"⚠️  [Notice] File '{image_source}' was not found on disk. Proceeding anyway.")
+                print(f"📎 [Photo Attached]: {image_source}")
+                user_content = f"[Image attached: {image_source}] {user_text}".strip()
+            else:
+                user_content = user_text
+
+            new_user_msg = {"role": "user", "content": user_content}
             if image_source:
                 new_user_msg["image_source"] = image_source
             messages.append(new_user_msg)
@@ -248,10 +259,11 @@ def main():
                 )
                 print("[✅ Resumed] Graph resumed with supervisor decision.")
 
-            final_response = result.get(
-                "final_response", "I apologize, but I am unable to process your request."
+            final_response = (
+                result.get("final_response")
+                or "I apologize, but I am unable to process your request."
             )
-            last_assistant_response = final_response
+            last_assistant_response = str(final_response or "")
             # Sync local messages list with graph's authoritative messages list
             if result.get("messages"):
                 messages = list(result["messages"])

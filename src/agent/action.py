@@ -1,6 +1,8 @@
 from __future__ import annotations
+from typing import Any
 from src.agent.observability.logger import with_logging
 from src.agent.state import ActionResult, EscalationRecord, EscalationPriority
+from src.agent.retrieval import _get_order_id_from_record
 from src.agent.tools.order_tools import (
     initiate_refund,
     change_shipping_address,
@@ -39,31 +41,31 @@ def action_node(state: dict) -> dict:
     """
     decision = state.get("decision")
     if not decision:
-        return state
+        return {**state}
 
     tool_name = (
         getattr(decision, "tool_name", None)
         or (decision.get("tool_name") if isinstance(decision, dict) else None)
     )
-    tool_args = (
+    tool_args = dict(
         getattr(decision, "tool_args", {})
         or (decision.get("tool_args", {}) if isinstance(decision, dict) else {})
     )
 
     # Automatic parameter enrichment from state context
+    order_ctx = state.get("order_context")
+    resolved_id = _get_order_id_from_record(order_ctx)
+    if "order_id" not in tool_args and resolved_id:
+        tool_args["order_id"] = str(resolved_id)
+
     if tool_name == "report_damaged_item":
         if not tool_args.get("image_source") and state.get("image_source"):
             tool_args["image_source"] = state["image_source"]
             tool_args["photo_provided"] = True
-        if not tool_args.get("order_id") and state.get("order_context"):
-            ctx = state["order_context"]
-            resolved_id = ctx.get("order_id") if isinstance(ctx, dict) else getattr(ctx, "order_id", None)
-            if resolved_id:
-                tool_args["order_id"] = str(resolved_id)
 
     tool_fn = TOOL_REGISTRY.get(tool_name)
     if tool_fn is None:
-        state["action_result"] = ActionResult(
+        action_result = ActionResult(
             tool_name=tool_name or "unknown",
             success=False,
             output=f"No tool registered for '{tool_name}'.",
@@ -74,16 +76,16 @@ def action_node(state: dict) -> dict:
         try:
             raw_result = tool_fn(**tool_args)
             if isinstance(raw_result, dict):
-                state["action_result"] = ActionResult(**raw_result)
+                action_result = ActionResult(**raw_result)
             else:
-                state["action_result"] = ActionResult(
+                action_result = ActionResult(
                     tool_name=tool_name,
                     success=True,
                     output=str(raw_result),
                     requires_escalation=False,
                 )
         except Exception as e:
-            state["action_result"] = ActionResult(
+            action_result = ActionResult(
                 tool_name=tool_name,
                 success=False,
                 output=f"Error executing tool '{tool_name}': {str(e)}",
@@ -91,12 +93,28 @@ def action_node(state: dict) -> dict:
                 escalation_reason=f"Tool exception: {str(e)}",
             )
 
-    result = state["action_result"]
+    updates: dict[str, Any] = {
+        "action_result": action_result,
+    }
 
-    if result.requires_escalation:
-        state["escalation"] = EscalationRecord(
-            reason=result.escalation_reason or "Tool forced escalation.",
+    if action_result.requires_escalation:
+        updates["escalation"] = EscalationRecord(
+            reason=action_result.escalation_reason or "Tool forced escalation.",
             priority=EscalationPriority.MEDIUM,
             source_node="action",
         )
-    return state
+
+    # Refresh order_context if state-changing tool was executed
+    target_order_id = tool_args.get("order_id") or resolved_id
+    if target_order_id and tool_name in ("change_shipping_address", "initiate_refund", "report_damaged_item"):
+        try:
+            refreshed = check_order_status(str(target_order_id))
+            if refreshed:
+                updates["order_context"] = refreshed
+        except Exception:
+            pass
+
+    return {
+        **state,
+        **updates,
+    }

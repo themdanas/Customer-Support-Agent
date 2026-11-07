@@ -93,7 +93,12 @@ class MockLLMClient(LLMClient):
         policy_context: list[str],
         image_source: Optional[str] = None,
     ) -> ReasonerDecision:
-        text = message.lower()
+        # Focus on the latest customer message if wrapped in structured reasoner context
+        if "Current Customer Message:" in message:
+            text = message.split("Current Customer Message:")[-1].lower()
+        else:
+            text = message.lower()
+
         if "sue" in text or "furious" in text or "terrible" in text:
             return ReasonerDecision(
                 action_type=ActionType.ESCALATE,
@@ -118,6 +123,29 @@ class MockLLMClient(LLMClient):
                     "notes": "Customer submitted photo of damaged item.",
                 },
                 rationale="Customer reported damaged item with photo evidence.",
+            )
+
+        # Handle customer refund requests
+        if any(w in text for w in ["refund", "money back", "money_back"]):
+            resolved_order_id = (
+                order_context.get("order_id")
+                if isinstance(order_context, dict)
+                else getattr(order_context, "order_id", "mock-order-id")
+            ) if order_context else "mock-order-id"
+
+            import re
+            amt_match = re.search(r"\$?\s*(\d+(?:\.\d{1,2})?)", text)
+            amount = float(amt_match.group(1)) if amt_match else 20.0
+
+            return ReasonerDecision(
+                action_type=ActionType.TOOL_CALL,
+                tool_name="initiate_refund",
+                tool_args={
+                    "order_id": str(resolved_order_id),
+                    "amount": amount,
+                    "reason": "Customer requested refund",
+                },
+                rationale="Customer requested refund for order.",
             )
 
         if order_context is not None:
@@ -169,18 +197,48 @@ class GroqLLMClient(LLMClient):
         self._active_model = self.model
 
     def _call_with_fallback(self, **kwargs) -> Any:
-        """Invokes Groq API with automatic fallback if the requested model is decommissioned or not found."""
+        """
+        Invokes Groq API with automatic fallback for:
+        1. Decommissioned / 404 models (falls back to FALLBACK_MODEL).
+        2. Groq 400 'json_validate_failed' errors (retries with explicit JSON prefill/instruction
+           or falls back to raw text mode so the agent never crashes in production).
+        """
         try:
             return self.client.chat.completions.create(model=self._active_model, **kwargs)
         except Exception as e:
-            err_msg = str(e).lower()
-            if "model_not_found" in err_msg or "404" in err_msg or "decommissioned" in err_msg:
+            err_msg = str(e)
+            err_lower = err_msg.lower()
+
+            # 1. Handle model availability errors
+            if "model_not_found" in err_lower or "404" in err_lower or "decommissioned" in err_lower:
                 logger.warning(
                     f"Model '{self._active_model}' is unavailable on Groq. "
                     f"Falling back to '{FALLBACK_MODEL}'."
                 )
                 self._active_model = FALLBACK_MODEL
                 return self.client.chat.completions.create(model=self._active_model, **kwargs)
+
+            # 2. Handle Groq 400 'json_validate_failed' when user sends short fragments like bare Order IDs
+            if "json_validate_failed" in err_lower or "failed to generate json" in err_lower:
+                logger.warning("Groq json_validate_failed encountered; retrying with strict JSON enforcement.")
+                retry_kwargs = dict(kwargs)
+                # Remove strict server-side validator that throws 400 so we can parse or recover gracefully
+                retry_kwargs.pop("response_format", None)
+                msgs = list(retry_kwargs.get("messages", []))
+                if msgs:
+                    msgs = msgs + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "SYSTEM ERROR: Your previous reply was not valid JSON. "
+                                "Output ONLY a raw JSON object starting with '{' and ending with '}' "
+                                "matching the required schema (action_type, rationale, tool_name, tool_args, draft_response)."
+                            ),
+                        }
+                    ]
+                    retry_kwargs["messages"] = msgs
+                return self.client.chat.completions.create(model=self._active_model, **retry_kwargs)
+
             raise
 
     def classify_intent(self, message: str, labels: list[str]) -> str:
@@ -285,17 +343,31 @@ You MUST reply with a valid JSON object matching this exact schema:
   "draft_response": "Polite draft response to the customer (required if action_type is answer)"
 }}"""
 
+        # Anchor the end of the user prompt so bare inputs (like "order_id <uuid>" or "yes")
+        # never trick the LLM into replying with plain conversational text.
+        user_prompt = (
+            f"{message}\n\n"
+            f"[IMPORTANT: Reply ONLY with a valid JSON object matching the schema. "
+            f"Do NOT write any conversational text outside the JSON object.]"
+        )
+
         resp = self._call_with_fallback(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message},
+                {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
             temperature=0.1,
-            max_tokens=350,
+            max_tokens=500,  # Increased from 350 so tool_args + rationale never truncate mid-JSON
         )
 
-        content = resp.choices[0].message.content or "{}"
+        content = (resp.choices[0].message.content or "{}").strip()
+        # Strip markdown fences or leading text if fallback retry ran without response_format
+        if not content.startswith("{"):
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError:
@@ -304,7 +376,7 @@ You MUST reply with a valid JSON object matching this exact schema:
                 rationale="Could not parse LLM output as JSON; defaulting to raw text.",
                 draft_response=content,
             )
-
+        
         raw_action_type = str(parsed.get("action_type", "answer")).lower()
         if raw_action_type == "tool_call":
             action_type = ActionType.TOOL_CALL

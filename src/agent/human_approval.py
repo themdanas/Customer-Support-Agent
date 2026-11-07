@@ -161,7 +161,11 @@ def human_approval_node(state: dict) -> dict:
         update_refund_status_in_db(order_id, new_status)
 
     state["status"] = ConversationStatus.RESOLVED
-    return state
+    return {
+        **state,
+        "approval_decision": state["approval_decision"],
+        "status": ConversationStatus.RESOLVED,
+    }
 
 
 def resume_approval(
